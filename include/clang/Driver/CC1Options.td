@@ -423,6 +423,8 @@ def fdump_record_layouts : Flag<["-"], "fdump-record-layouts">,
   HelpText<"Dump record layout information">;
 def fdump_record_layouts_simple : Flag<["-"], "fdump-record-layouts-simple">,
   HelpText<"Dump record layout information in a simple form used for testing">;
+def fdump_struct_layouts_for_sbox : Flag<["-"], "fdump-struct-layouts-for-sbox">,
+  HelpText<"Dump the struct reflection macros">;
 def fix_what_you_can : Flag<["-"], "fix-what-you-can">,
   HelpText<"Apply fix-it advice even in the presence of unfixable errors">;
 def fix_only_warnings : Flag<["-"], "fix-only-warnings">,

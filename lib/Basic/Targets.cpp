@@ -27,6 +27,8 @@
 #include "llvm/ADT/Triple.h"
 #include "llvm/MC/MCSectionMachO.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/TargetRegistry.h" // @LOCALMOD
+#include "llvm/NaClABI.h"
 #include <algorithm>
 #include <memory>
 using namespace clang;
@@ -711,19 +713,117 @@ public:
     this->SizeType = TargetInfo::UnsignedInt;
     this->PtrDiffType = TargetInfo::SignedInt;
     this->IntPtrType = TargetInfo::SignedInt;
+    if (NaClDontBreakABI && (Triple.getArch() == llvm::Triple::x86 || Triple.getArch() == llvm::Triple::x86_64))
+    {
+      if(Triple.getArch() == llvm::Triple::x86)
+      {
+        // not mentioned in the general settings, we explicitly set it
+        this->PointerAlign = 32;
+        this->PointerWidth = 32;
+
+        //Settings from various targets
+
+        //X86TargetInfo
+        this->LongDoubleFormat = &llvm::APFloat::x87DoubleExtended;
+
+        //X86_32TargetInfo
+        this->DoubleAlign = this->LongLongAlign = 32;
+        this->LongDoubleWidth = 96;
+        this->LongDoubleAlign = 32;
+        this->SuitableAlign = 128;
+        this->SizeType = TargetInfo::UnsignedInt;
+        this->PtrDiffType = TargetInfo::SignedInt;
+        this->IntPtrType = TargetInfo::SignedInt;
+
+        //LinuxTargetInfo
+        this->WIntType = TargetInfo::UnsignedInt;
+
+        //We should selectively enable this as well, if we are compiling for these OSes
+        // But for now we won't add it as we would need to allow the end user to specify a flag stating that they need this
+
+        // //WindowsX86_32TargetInfo
+        // WCharType = UnsignedShort;
+        // DoubleAlign = LongLongAlign = 64;
+
+        // //MicrosoftX86_32TargetInfo
+        // LongDoubleWidth = LongDoubleAlign = 64;
+        // LongDoubleFormat = &llvm::APFloat::IEEEdouble;
+
+        // //AndroidX86_32TargetInfo
+        // SuitableAlign = 32;
+        // LongDoubleWidth = 64;
+        // LongDoubleFormat = &llvm::APFloat::IEEEdouble;
+
+      }
+      else
+      {
+        // not mentioned in the general settings, we explicitly set it
+        this->DoubleAlign = 64;
+        this->LongLongAlign = 64;
+
+        //Settings from various targets
+
+        //X86TargetInfo
+        this->LongDoubleFormat = &llvm::APFloat::x87DoubleExtended;
+
+        //X86_64TargetInfo
+        const bool IsX32 = this->getTriple().getEnvironment() == llvm::Triple::GNUX32;
+        this->LongWidth = this->LongAlign = this->PointerWidth = this->PointerAlign = IsX32 ? 32 : 64;
+        this->LongDoubleWidth = 128;
+        this->LongDoubleAlign = 128;
+        this->LargeArrayMinWidth = 128;
+        this->LargeArrayAlign = 128;
+        this->SuitableAlign = 128;
+        this->SizeType    = IsX32 ? TargetInfo::UnsignedInt      : TargetInfo::UnsignedLong;
+        this->PtrDiffType = IsX32 ? TargetInfo::SignedInt        : TargetInfo::SignedLong;
+        this->IntPtrType  = IsX32 ? TargetInfo::SignedInt        : TargetInfo::SignedLong;
+        this->IntMaxType  = IsX32 ? TargetInfo::SignedLongLong   : TargetInfo::SignedLong;
+        this->Int64Type   = IsX32 ? TargetInfo::SignedLongLong   : TargetInfo::SignedLong;
+
+        //LinuxTargetInfo
+        this->WIntType = TargetInfo::UnsignedInt;
+
+        //We should selectively enable this as well, if we are compiling for these OSes
+        // But for now we won't add it as we would need to allow the end user to specify a flag stating that they need this
+
+        // //WindowsX86_64TargetInfo
+        // WCharType = UnsignedShort;
+        // LongWidth = LongAlign = 32;
+        // DoubleAlign = LongLongAlign = 64;
+        // IntMaxType = SignedLongLong;
+        // Int64Type = SignedLongLong;
+        // SizeType = UnsignedLongLong;
+        // PtrDiffType = SignedLongLong;
+        // IntPtrType = SignedLongLong;
+        // LongDoubleWidth = LongDoubleAlign = 64;
+        // LongDoubleFormat = &llvm::APFloat::IEEEdouble;
+
+        // //MicrosoftX86_64TargetInfo
+        // LongDoubleWidth = LongDoubleAlign = 64;
+        // LongDoubleFormat = &llvm::APFloat::IEEEdouble;
+
+        // //AndroidX86_64TargetInfo
+        // LongDoubleFormat = &llvm::APFloat::IEEEquad;
+
+      }
+    }
     // RegParmMax is inherited from the underlying architecture
     this->LongDoubleFormat = &llvm::APFloat::IEEEdouble;
     if (Triple.getArch() == llvm::Triple::arm) {
       // Handled in ARM's setABI().
     } else if (Triple.getArch() == llvm::Triple::x86) {
-      this->DescriptionString = "e-m:e-p:32:32-i64:64-n8:16:32-S128";
+      // Handled in X86_32's setDescriptionString.
     } else if (Triple.getArch() == llvm::Triple::x86_64) {
       this->DescriptionString = "e-m:e-p:32:32-i64:64-n8:16:32:64-S128";
+      if(NaClDontBreakABI)
+      {
+        this->DescriptionString = "e-m:e-i64:64-f80:128-n8:16:32:64-S128";
+      }
     } else if (Triple.getArch() == llvm::Triple::mipsel) {
       // Handled on mips' setDescriptionString.
     } else {
       assert(Triple.getArch() == llvm::Triple::le32);
-      this->DescriptionString = "e-p:32:32-i64:64";
+      this->DescriptionString = "e-p:32:32-i64:64-n32";
     }
   }
 };
@@ -3417,13 +3517,29 @@ X86TargetInfo::convertConstraint(const char *&Constraint) const {
 
 // X86-32 generic target
 class X86_32TargetInfo : public X86TargetInfo {
+  // @LOCALMOD-START
+  virtual void setDescriptionString() {
+    if (getTriple().isOSNaCl())
+    {
+      DescriptionString = "e-m:e-p:32:32-i64:64-n8:16:32-S128";
+      if(NaClDontBreakABI)
+      {
+        DescriptionString = "e-m:e-p:32:32-f64:32:64-f80:32-n8:16:32-S128";
+      }
+    }
+    else if (HasAlignedDouble)
+      DescriptionString = "e-m:e-p:32:32-i64:64-f80:32-n8:16:32-S128";
+    else
+      DescriptionString = "e-m:e-p:32:32-f64:32:64-f80:32-n8:16:32-S128";
+  }
+  bool HasAlignedDouble;
+  // @LOCALMOD-END
 public:
   X86_32TargetInfo(const llvm::Triple &Triple) : X86TargetInfo(Triple) {
     DoubleAlign = LongLongAlign = 32;
     LongDoubleWidth = 96;
     LongDoubleAlign = 32;
     SuitableAlign = 128;
-    DescriptionString = "e-m:e-p:32:32-f64:32:64-f80:32-n8:16:32-S128";
     SizeType = UnsignedInt;
     PtrDiffType = SignedInt;
     IntPtrType = SignedInt;
@@ -3468,6 +3584,18 @@ public:
 
     return X86TargetInfo::validateOperandSize(Constraint, Size);
   }
+
+  // @LOCALMOD-START
+  bool handleLLVMArgs(std::vector<std::string> &Args) override {
+    HasAlignedDouble = false;
+    auto it = std::find(Args.begin(), Args.end(), "-malign-double");
+    if (it != Args.end()) {
+      HasAlignedDouble = true;
+    }
+    setDescriptionString();
+    return true;
+  }
+  // @LOCALMOD-END
 };
 
 class NetBSDI386TargetInfo : public NetBSDTargetInfo<X86_32TargetInfo> {
@@ -3507,6 +3635,11 @@ public:
 };
 
 class DarwinI386TargetInfo : public DarwinTargetInfo<X86_32TargetInfo> {
+  // @LOCALMOD-START
+  void setDescriptionString() override {
+    DescriptionString = "e-m:o-p:32:32-f64:32:64-f80:128-n8:16:32-S128";
+  }
+  // @LOCALMOD-END
 public:
   DarwinI386TargetInfo(const llvm::Triple &Triple)
       : DarwinTargetInfo<X86_32TargetInfo>(Triple) {
@@ -3516,7 +3649,6 @@ public:
     MaxVectorAlign = 256;
     SizeType = UnsignedLong;
     IntPtrType = SignedLong;
-    DescriptionString = "e-m:o-p:32:32-f64:32:64-f80:128-n8:16:32-S128";
     HasAlignMac68kSupport = true;
   }
 
@@ -3524,15 +3656,19 @@ public:
 
 // x86-32 Windows target
 class WindowsX86_32TargetInfo : public WindowsTargetInfo<X86_32TargetInfo> {
+  // @LOCALMOD-START
+  void setDescriptionString() override {
+    if (getTriple().isOSWindows() && getTriple().isOSBinFormatCOFF())
+      DescriptionString = "e-m:x-p:32:32-i64:64-f80:32-n8:16:32-S32";
+    else
+      DescriptionString = "e-m:e-p:32:32-i64:64-f80:32-n8:16:32-S32";
+  }
+  // @LOCALMOD-END
 public:
   WindowsX86_32TargetInfo(const llvm::Triple &Triple)
       : WindowsTargetInfo<X86_32TargetInfo>(Triple) {
     WCharType = UnsignedShort;
     DoubleAlign = LongLongAlign = 64;
-    bool IsWinCOFF =
-        getTriple().isOSWindows() && getTriple().isOSBinFormatCOFF();
-    DescriptionString = IsWinCOFF ? "e-m:x-p:32:32-i64:64-f80:32-n8:16:32-S32"
-                                  : "e-m:e-p:32:32-i64:64-f80:32-n8:16:32-S32";
   }
   void getTargetDefines(const LangOptions &Opts,
                         MacroBuilder &Builder) const override {
@@ -3605,13 +3741,17 @@ public:
 
 // x86-32 Cygwin target
 class CygwinX86_32TargetInfo : public X86_32TargetInfo {
+  // @LOCALMOD-START
+  void setDescriptionString() override {
+    DescriptionString = "e-m:x-p:32:32-i64:64-f80:32-n8:16:32-S32";
+  }
+  // @LOCALMOD-END
 public:
   CygwinX86_32TargetInfo(const llvm::Triple &Triple)
       : X86_32TargetInfo(Triple) {
     TLSSupported = false;
     WCharType = UnsignedShort;
     DoubleAlign = LongLongAlign = 64;
-    DescriptionString = "e-m:x-p:32:32-i64:64-f80:32-n8:16:32-S32";
   }
   void getTargetDefines(const LangOptions &Opts,
                         MacroBuilder &Builder) const override {
@@ -6409,6 +6549,100 @@ public:
     this->PtrDiffType = TargetInfo::SignedInt;
     this->IntPtrType = TargetInfo::SignedInt;
     this->RegParmMax = 0; // Disallow regparm
+    if (NaClDontBreakABI && (Triple.getArch() == llvm::Triple::x86 || Triple.getArch() == llvm::Triple::x86_64))
+    {
+      if(Triple.getArch() == llvm::Triple::x86)
+      {
+        // not mentioned in the general settings, we explicitly set it
+        this->PointerAlign = 32;
+        this->PointerWidth = 32;
+
+        //Settings from various targets
+
+        //X86TargetInfo
+        this->LongDoubleFormat = &llvm::APFloat::x87DoubleExtended;
+
+        //X86_32TargetInfo
+        this->DoubleAlign = this->LongLongAlign = 32;
+        this->LongDoubleWidth = 96;
+        this->LongDoubleAlign = 32;
+        this->SuitableAlign = 128;
+        this->SizeType = TargetInfo::UnsignedInt;
+        this->PtrDiffType = TargetInfo::SignedInt;
+        this->IntPtrType = TargetInfo::SignedInt;
+
+        //LinuxTargetInfo
+        this->WIntType = TargetInfo::UnsignedInt;
+
+        //We should selectively enable this as well, if we are compiling for these OSes
+        // But for now we won't add it as we would need to allow the end user to specify a flag stating that they need this
+
+        // //WindowsX86_32TargetInfo
+        // WCharType = UnsignedShort;
+        // DoubleAlign = LongLongAlign = 64;
+
+        // //MicrosoftX86_32TargetInfo
+        // LongDoubleWidth = LongDoubleAlign = 64;
+        // LongDoubleFormat = &llvm::APFloat::IEEEdouble;
+
+        // //AndroidX86_32TargetInfo
+        // SuitableAlign = 32;
+        // LongDoubleWidth = 64;
+        // LongDoubleFormat = &llvm::APFloat::IEEEdouble;
+
+      }
+      else
+      {
+        // not mentioned in the general settings, we explicitly set it
+        this->DoubleAlign = 64;
+        this->LongLongAlign = 64;
+
+        //Settings from various targets
+
+        //X86TargetInfo
+        this->LongDoubleFormat = &llvm::APFloat::x87DoubleExtended;
+
+        //X86_64TargetInfo
+        const bool IsX32 = this->getTriple().getEnvironment() == llvm::Triple::GNUX32;
+        this->LongWidth = this->LongAlign = this->PointerWidth = this->PointerAlign = IsX32 ? 32 : 64;
+        this->LongDoubleWidth = 128;
+        this->LongDoubleAlign = 128;
+        this->LargeArrayMinWidth = 128;
+        this->LargeArrayAlign = 128;
+        this->SuitableAlign = 128;
+        this->SizeType    = IsX32 ? TargetInfo::UnsignedInt      : TargetInfo::UnsignedLong;
+        this->PtrDiffType = IsX32 ? TargetInfo::SignedInt        : TargetInfo::SignedLong;
+        this->IntPtrType  = IsX32 ? TargetInfo::SignedInt        : TargetInfo::SignedLong;
+        this->IntMaxType  = IsX32 ? TargetInfo::SignedLongLong   : TargetInfo::SignedLong;
+        this->Int64Type   = IsX32 ? TargetInfo::SignedLongLong   : TargetInfo::SignedLong;
+
+        //LinuxTargetInfo
+        this->WIntType = TargetInfo::UnsignedInt;
+
+        //We should selectively enable this as well, if we are compiling for these OSes
+        // But for now we won't add it as we would need to allow the end user to specify a flag stating that they need this
+
+        // //WindowsX86_64TargetInfo
+        // WCharType = UnsignedShort;
+        // LongWidth = LongAlign = 32;
+        // DoubleAlign = LongLongAlign = 64;
+        // IntMaxType = SignedLongLong;
+        // Int64Type = SignedLongLong;
+        // SizeType = UnsignedLongLong;
+        // PtrDiffType = SignedLongLong;
+        // IntPtrType = SignedLongLong;
+        // LongDoubleWidth = LongDoubleAlign = 64;
+        // LongDoubleFormat = &llvm::APFloat::IEEEdouble;
+
+        // //MicrosoftX86_64TargetInfo
+        // LongDoubleWidth = LongDoubleAlign = 64;
+        // LongDoubleFormat = &llvm::APFloat::IEEEdouble;
+
+        // //AndroidX86_64TargetInfo
+        // LongDoubleFormat = &llvm::APFloat::IEEEquad;
+
+      }
+    }
   }
 
   void getDefaultFeatures(llvm::StringMap<bool> &Features) const override {
@@ -6455,6 +6689,24 @@ void PNaClTargetInfo::getGCCRegAliases(const GCCRegAlias *&Aliases,
   Aliases = nullptr;
   NumAliases = 0;
 }
+
+namespace {
+llvm::Target PNaClTarget;
+llvm::RegisterTarget<llvm::Triple::le32, /*HasJIT=*/false> P(
+    PNaClTarget, "le32", "PNaCl");
+} // end anonymous namespace.
+
+// We attempt to use PNaCl (le32) frontend and Mips32EL backend.
+class NaClMips32ELTargetInfo : public Mips32ELTargetInfo {
+public:
+  NaClMips32ELTargetInfo(const llvm::Triple &Triple) :
+    Mips32ELTargetInfo(Triple) {
+  }
+
+  BuiltinVaListKind getBuiltinVaListKind() const override {
+    return TargetInfo::PNaClABIBuiltinVaList;
+  }
+};
 
 class Le64TargetInfo : public TargetInfo {
   static const Builtin::Info BuiltinInfo[];
@@ -6822,7 +7074,7 @@ static TargetInfo *AllocateTarget(const llvm::Triple &Triple) {
     case llvm::Triple::NetBSD:
       return new NetBSDTargetInfo<Mips32ELTargetInfo>(Triple);
     case llvm::Triple::NaCl:
-      return new NaClTargetInfo<Mips32ELTargetInfo>(Triple);
+      return new NaClTargetInfo<NaClMips32ELTargetInfo>(Triple);
     default:
       return new Mips32ELTargetInfo(Triple);
     }
@@ -7137,6 +7389,11 @@ TargetInfo::CreateTargetInfo(DiagnosticsEngine &Diags,
     Opts->Features.push_back((it->second ? "+" : "-") + it->first().str());
   if (!Target->handleTargetFeatures(Opts->Features, Diags))
     return nullptr;
+
+  // @LOCALMOD-START
+  if (!Target->handleLLVMArgs(Opts->LLVMArgs))
+    return nullptr;
+  // @LOCALMOD-END
 
   return Target.release();
 }

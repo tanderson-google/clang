@@ -76,7 +76,7 @@
 
 // RUN: %clang_cc1 -triple le32-nacl -o - -emit-llvm %s | \
 // RUN: FileCheck %s -check-prefix=LE32-NACL
-// LE32-NACL: target datalayout = "e-p:32:32-i64:64"
+// LE32-NACL: target datalayout = "e-p:32:32-i64:64-n32"
 
 // RUN: %clang_cc1 -triple powerpc-unknown -o - -emit-llvm %s | \
 // RUN: FileCheck %s -check-prefix=PPC

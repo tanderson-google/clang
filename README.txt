@@ -1,3 +1,13 @@
+This has further been modified to ensure the Clang-NACL does not break ABI compatibility with non NACL binaries when compiling for NACL
+The LLVM back end that accompanies this is located here https://github.com/shravanrn/nacl-llvm.git
+
+Build both LLVM and Clang by following instructions from the below link but using the nacl-llvm.git and nacl-clang.git repos
+https://clang.llvm.org/get_started.html
+
+NACL-Clang
+==========
+This is the modified Clang that supports the NACL backend.
+
 //===----------------------------------------------------------------------===//
 // C Language Family Front-end
 //===----------------------------------------------------------------------===//

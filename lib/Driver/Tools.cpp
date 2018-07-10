@@ -671,6 +671,10 @@ StringRef tools::arm::getARMFloatABI(const Driver &D, const ArgList &Args,
       }
       break;
 
+    case llvm::Triple::NaCl: // @LOCALMOD
+      FloatABI = "hard";
+      break;
+
     default:
       switch(Triple.getEnvironment()) {
       case llvm::Triple::GNUEABIHF:
@@ -1225,6 +1229,13 @@ void Clang::AddMIPSTargetArgs(const ArgList &Args,
     CmdArgs.push_back(Args.MakeArgString("-mips-ssection-threshold=" + v));
     A->claim();
   }
+
+  // @LOCALMOD-BEGIN
+  if (Triple.getOS() == llvm::Triple::NaCl) {
+    CmdArgs.push_back("-mllvm");
+    CmdArgs.push_back("-direct-to-nacl");
+  }
+  // @LOCALMOD-END
 }
 
 /// getPPCTargetCPU - Get the (LLVM) name of the PowerPC cpu we are targeting.
@@ -1701,6 +1712,13 @@ void Clang::AddX86TargetArgs(const ArgList &Args,
           << A->getOption().getName() << Value;
     }
   }
+
+  // @LOCALMOD-START
+  if (Args.getLastArg(options::OPT_malign_double)) {
+    CmdArgs.push_back("-mllvm");
+    CmdArgs.push_back("-malign-double");
+  }
+  // @LOCALMOD-END
 }
 
 static inline bool HasPICArg(const ArgList &Args) {
@@ -1746,6 +1764,16 @@ void Clang::AddHexagonTargetArgs(const ArgList &Args,
   }
   CmdArgs.push_back ("-mllvm");
   CmdArgs.push_back ("-machine-sink-split=0");
+}
+
+void Clang::AddLe32TargetArgs(const ArgList &Args,
+                              ArgStringList &CmdArgs) const {
+  Args.ClaimAllArgs(options::OPT_emit_obj);
+
+  // -fno-gnu-inline-asm is default.
+  if (!Args.hasFlag(options::OPT_fgnu_inline_asm,
+                    options::OPT_fno_gnu_inline_asm, false))
+    CmdArgs.push_back("-fno-gnu-inline-asm");
 }
 
 // Decode AArch64 features from string like +[no]featureA+[no]featureB+...
@@ -2032,7 +2060,8 @@ static void addExceptionArgs(const ArgList &Args, types::ID InputType,
 
   if (types::isCXX(InputType)) {
     bool CXXExceptionsEnabled =
-        Triple.getArch() != llvm::Triple::xcore && !Triple.isPS4CPU();
+        Triple.getArch() != llvm::Triple::xcore && !Triple.isPS4CPU() &&
+        Triple.getArch() != llvm::Triple::le32;
     Arg *ExceptionArg = Args.getLastArg(
         options::OPT_fcxx_exceptions, options::OPT_fno_cxx_exceptions,
         options::OPT_fexceptions, options::OPT_fno_exceptions);
@@ -3137,10 +3166,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       Args.hasArg(options::OPT_dA))
     CmdArgs.push_back("-masm-verbose");
 
-  bool UsingIntegratedAssembler =
-      Args.hasFlag(options::OPT_fintegrated_as, options::OPT_fno_integrated_as,
-                   IsIntegratedAssemblerDefault);
-  if (!UsingIntegratedAssembler)
+  if (!Args.hasFlag(options::OPT_fintegrated_as, options::OPT_fno_integrated_as,
+                    IsIntegratedAssemblerDefault))
     CmdArgs.push_back("-no-integrated-as");
 
   if (Args.hasArg(options::OPT_fdebug_pass_structure)) {
@@ -3254,6 +3281,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   case llvm::Triple::hexagon:
     AddHexagonTargetArgs(Args, CmdArgs);
     break;
+
+  case llvm::Triple::le32:
+    AddLe32TargetArgs(Args, CmdArgs);
   }
 
   // Add clang-cl arguments.
@@ -3384,8 +3414,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   if (!Args.hasFlag(options::OPT_funique_section_names,
-                    options::OPT_fno_unique_section_names,
-                    !UsingIntegratedAssembler))
+                    options::OPT_fno_unique_section_names, true))
     CmdArgs.push_back("-fno-unique-section-names");
 
   Args.AddAllArgs(CmdArgs, options::OPT_finstrument_functions);
@@ -4510,7 +4539,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // Enable vectorization per default according to the optimization level
   // selected. For optimization levels that want vectorization we use the alias
   // option to simplify the hasFlag logic.
-  bool EnableVec = shouldEnableVectorizerAtOLevel(Args, false);
+  bool EnableVec = shouldEnableVectorizerAtOLevel(Args, false) &&
+      getToolChain().getArch() != llvm::Triple::le32;
   OptSpecifier VectorizeAliasOption = EnableVec ? options::OPT_O_Group :
     options::OPT_fvectorize;
   if (Args.hasFlag(options::OPT_fvectorize, VectorizeAliasOption,
@@ -4518,7 +4548,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-vectorize-loops");
 
   // -fslp-vectorize is enabled based on the optimization level selected.
-  bool EnableSLPVec = shouldEnableVectorizerAtOLevel(Args, true);
+  bool EnableSLPVec = shouldEnableVectorizerAtOLevel(Args, true) &&
+      getToolChain().getArch() != llvm::Triple::le32;
   OptSpecifier SLPVectAliasOption = EnableSLPVec ? options::OPT_O_Group :
     options::OPT_fslp_vectorize;
   if (Args.hasFlag(options::OPT_fslp_vectorize, SLPVectAliasOption,
@@ -8057,6 +8088,8 @@ void nacltools::Link::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("armelf_nacl");
   else if (ToolChain.getArch() == llvm::Triple::x86_64)
     CmdArgs.push_back("elf_x86_64_nacl");
+  else if (ToolChain.getArch() == llvm::Triple::mipsel)
+    CmdArgs.push_back("mipselelf_nacl");
   else
     D.Diag(diag::err_target_unsupported_arch) << ToolChain.getArchName() <<
         "Native Client";
@@ -8121,6 +8154,13 @@ void nacltools::Link::ConstructJob(Compilation &C, const JobAction &JA,
       if (Args.hasArg(options::OPT_pthread) ||
           Args.hasArg(options::OPT_pthreads) ||
           D.CCCIsCXX()) {
+        // Gold, used by Mips, handles nested groups differently than ld, and
+        // without '-lnacl' it prefers symbols from libpthread.a over libnacl.a,
+        // which is not a desired behaviour here.
+        // See https://sourceware.org/ml/binutils/2015-03/msg00034.html
+        if (getToolChain().getArch() == llvm::Triple::mipsel)
+          CmdArgs.push_back("-lnacl");
+
         CmdArgs.push_back("-lpthread");
       }
 
@@ -8131,6 +8171,13 @@ void nacltools::Link::ConstructJob(Compilation &C, const JobAction &JA,
       else
         CmdArgs.push_back("-lgcc_s");
       CmdArgs.push_back("--no-as-needed");
+
+      // Mips needs to create and use pnacl_legacy library that contains
+      // definitions from bitcode/pnaclmm.c and definitions for
+      // __nacl_tp_tls_offset() and __nacl_tp_tdb_offset().
+      if (getToolChain().getArch() == llvm::Triple::mipsel)
+        CmdArgs.push_back("-lpnacl_legacy");
+
       CmdArgs.push_back("--end-group");
     }
 
@@ -8150,6 +8197,191 @@ void nacltools::Link::ConstructJob(Compilation &C, const JobAction &JA,
                                           ToolChain.Linker.c_str(), CmdArgs));
 }
 
+void pnacltools::Link::ConstructJob(Compilation &C, const JobAction &JA,
+                                    const InputInfo &Output,
+                                    const InputInfoList &Inputs,
+                                    const ArgList &Args,
+                                    const char *LinkingOutput) const {
+  const toolchains::PNaClToolChain& ToolChain =
+    static_cast<const toolchains::PNaClToolChain&>(getToolChain());
+  const Driver &D = ToolChain.getDriver();
+
+  ArgStringList CmdArgs;
+
+  // Silence warning for "clang -g foo.o -o foo"
+  Args.ClaimAllArgs(options::OPT_g_Group);
+  // and "clang -emit-llvm foo.o -o foo"
+  Args.ClaimAllArgs(options::OPT_emit_llvm);
+  // and for "clang -w foo.o -o foo". Other warning options are already
+  // handled somewhere else.
+  Args.ClaimAllArgs(options::OPT_w);
+  // Silence warning for libgcc since we only support compiler-rt.
+  Args.ClaimAllArgs(options::OPT_shared_libgcc);
+  Args.ClaimAllArgs(options::OPT_static_libgcc);
+
+  if (!D.SysRoot.empty())
+    CmdArgs.push_back(Args.MakeArgString("--sysroot=" + D.SysRoot));
+
+  if (Arg *A = Args.getLastArg(options::OPT_shared,
+                               options::OPT_dynamic))
+    D.Diag(diag::err_drv_unsupported_opt) << A->getOption().getName();
+
+  // This option does not currently have any effect for bitcode linking,
+  // but we support it for backwards compatibility with the legacy driver
+  // and existing software packages.
+  if (Args.hasArg(options::OPT_rdynamic))
+    CmdArgs.push_back("-export-dynamic");
+
+  std::string TripleStr = ToolChain.ComputeEffectiveClangTriple(Args);
+  if (ToolChain.getArch() != llvm::Triple::le32)
+    D.Diag(diag::err_target_unsupported_arch) << ToolChain.getArchName()
+                                              << TripleStr;
+
+  Args.AddAllArgs(CmdArgs, options::OPT_static);
+  if (!Args.hasArg(options::OPT_static))
+    CmdArgs.push_back("-static");
+
+  bool EH = exceptionSettings(Args, ToolChain.getTriple());
+
+  bool IsRelocatable = false;
+  if (Args.hasArg(options::OPT_Wl_COMMA)) {
+    for (arg_iterator
+          it = Args.filtered_begin(options::OPT_Wl_COMMA),
+          ie = Args.filtered_end();
+         it != ie;
+         ++it) {
+      for (unsigned i = 0, e = (*it)->getNumValues(); i != e; ++i) {
+        if (StringRef((*it)->getValue(i)) == "-r")
+          IsRelocatable = true;
+      }
+    }
+  }
+
+  if (!IsRelocatable) {
+    // The following functions are implemented in the native support library.
+    // Before a .pexe is produced, they get rewritten to intrinsic calls.
+    // However, this rewriting happens after bitcode linking - so gold has to
+    // be told that these are allowed to remain unresolved.
+    const StringRef AllowUnresolvedSymbols[] = {
+      "memcpy",
+      "memset",
+      "memmove",
+      "setjmp",
+      "longjmp"
+    };
+    CmdArgs.push_back("--undef-sym-check");
+    for (StringRef Symbol : AllowUnresolvedSymbols)
+      CmdArgs.push_back(Args.MakeArgString(Twine("--allow-unresolved=") + Symbol));
+
+    // These TLS layout functions are either defined by the ExpandTls pass or
+    // (for non-ABI-stable code only) by PNaCl's native support code.
+    const StringRef AllowUnresolvedSymbols1[] = {
+      "__nacl_tp_tls_offset",
+      "__nacl_tp_tdb_offset",
+      "__nacl_get_arch",
+    };
+    for (StringRef Symbol : AllowUnresolvedSymbols1)
+      CmdArgs.push_back(Args.MakeArgString(Twine("--allow-unresolved=") + Symbol));
+
+    if (EH) {
+      // These symbols are defined by libsupc++ and the PNaClSjLjEH pass
+      // generates references to them.
+      const StringRef UndefinedSymbols[] = {
+        "__pnacl_eh_stack",
+        "__pnacl_eh_resume",
+      };
+      for (StringRef Symbol : UndefinedSymbols)
+        CmdArgs.push_back(Args.MakeArgString(Twine("--undefined=") + Symbol));
+      // These symbols are defined by the PNaClSjLjEH pass and libsupc++ refers
+      // to them.
+      const StringRef AllowUnresolvedSymbols[] = {
+        "__pnacl_eh_type_table",
+        "__pnacl_eh_action_table",
+        "__pnacl_eh_filter_table",
+      };
+      for (StringRef Symbol : AllowUnresolvedSymbols)
+        CmdArgs.push_back(Args.MakeArgString(Twine("--allow-unresolved=") + Symbol));
+    }
+  }
+
+  CmdArgs.push_back("-o");
+  CmdArgs.push_back(Output.getFilename());
+
+  if (!Args.hasArg(options::OPT_nostdlib) &&
+      !Args.hasArg(options::OPT_nostartfiles)) {
+    CmdArgs.push_back(Args.MakeArgString(ToolChain.GetFilePath("crt1.x")));
+    CmdArgs.push_back(Args.MakeArgString(ToolChain.GetFilePath("crti.bc")));
+    CmdArgs.push_back(Args.MakeArgString(ToolChain.GetFilePath("crtbegin.bc")));
+
+    const char *unwind = nullptr;
+    if (EH)
+      unwind = "sjlj_eh_redirect.bc";
+    else
+      unwind = "unwind_stubs.bc";
+    CmdArgs.push_back(Args.MakeArgString(ToolChain.GetFilePath(unwind)));
+  }
+
+  Args.AddAllArgs(CmdArgs, options::OPT_L);
+  Args.AddAllArgs(CmdArgs, options::OPT_u);
+
+  const ToolChain::path_list &Paths = ToolChain.getFilePaths();
+
+  for (const auto &Path : Paths)
+    CmdArgs.push_back(Args.MakeArgString(StringRef("-L") + Path));
+
+  // Tell the linker to load the plugin. This has to come before AddLinkerInputs
+  // as gold requires -plugin to come before any -plugin-opt that -Wl might
+  // forward.
+  CmdArgs.push_back("-plugin");
+  std::string Plugin = ToolChain.getDriver().Dir +
+      "/../lib" CLANG_LIBDIR_SUFFIX "/LLVMgold" LTDL_SHLIB_EXT;
+
+  CmdArgs.push_back(Args.MakeArgString(Plugin));
+
+  CmdArgs.push_back("-plugin-opt=emit-llvm");
+  if (!IsRelocatable)
+    CmdArgs.push_back(Args.MakeArgString(Twine("-plugin-opt=mtriple=") +
+                                         ToolChain.getTriple().str()));
+
+  if (EH)
+    CmdArgs.push_back("-plugin-opt=-enable-pnacl-sjlj-eh");
+
+  if (Args.hasArg(options::OPT_Z_Xlinker__no_demangle))
+    CmdArgs.push_back("--no-demangle");
+
+  AddLinkerInputs(ToolChain, Inputs, Args, CmdArgs);
+
+  if (D.CCCIsCXX() &&
+      !Args.hasArg(options::OPT_nostdlib) &&
+      !Args.hasArg(options::OPT_nodefaultlibs)) {
+    ToolChain.AddCXXStdlibLibArgs(Args, CmdArgs);
+    CmdArgs.push_back("-lpthread");
+    CmdArgs.push_back("-lm");
+  }
+  // Silence warnings when linking C code with a C++ '-stdlib' argument.
+  Args.ClaimAllArgs(options::OPT_stdlib_EQ);
+
+  if (!Args.hasArg(options::OPT_nostdlib)) {
+    if (!Args.hasArg(options::OPT_nodefaultlibs)) {
+      CmdArgs.push_back("--start-group");
+
+      if ((Args.hasArg(options::OPT_pthread) ||
+           Args.hasArg(options::OPT_pthreads)))
+        CmdArgs.push_back("-lpthread");
+
+      CmdArgs.push_back("-lc");
+      CmdArgs.push_back("-lgcc");
+      CmdArgs.push_back("-lm");
+      ToolChain.AddLinkRuntimeLibArgs(Args, CmdArgs);
+
+      CmdArgs.push_back("--end-group");
+    }
+  }
+
+  std::string Linker = ToolChain.GetProgramPath("le32-nacl-ld.gold");
+  C.addCommand(
+      llvm::make_unique<Command>(JA, *this, Args.MakeArgString(Linker), CmdArgs));
+}
 
 void minix::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
                                    const InputInfo &Output,

@@ -219,6 +219,28 @@ public:
                                        llvm::StringRef Value,
                                        llvm::SmallString<32> &Opt) const {}
 
+  // @LOCALMOD-START
+  /// Determine whether the sequentially consistent fence generated for
+  /// the legacy GCC-style ``__sync_synchronize()`` builtin should be
+  /// surrounded by empty assembly directives which touch all of
+  /// memory. This allows platforms which aim for portability to
+  /// isolate themselves from changes in sequentially consistent
+  /// fence's semantics, since its intent is to represent the
+  /// C11/C++11 memory model which only orders atomic memory accesses.
+  /// This won't guarantee that all accesses (e.g. those to
+  /// non-escaping objects) will not be reordered.
+  virtual bool addAsmMemoryAroundSyncSynchronize() const {
+    return false;
+  }
+
+  /// Determine whether a full sequentially consistent fence should be
+  /// emitted when ``asm("":::"memory")`` is encountered, treating it
+  /// like ``__sync_synchronize()``.
+  virtual bool asmMemoryIsFence() const {
+    return false;
+  }
+  // @LOCALMOD-END
+
   /// Gets the target-specific default alignment used when an 'aligned' clause
   /// is used with a 'simd' OpenMP directive without specifying a specific
   /// alignment.

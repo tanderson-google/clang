@@ -21,11 +21,16 @@
 #include "llvm/Support/CrashRecoveryContext.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/MathExtras.h"
+#include <set>
+#include <string>
 
 using namespace clang;
 
 namespace {
 
+using namespace clang;
+
+std::set<std::string> StructsFound;
 /// BaseSubobjectInfo - Represents a single base subobject in a complete class.
 /// For a class hierarchy like
 ///
@@ -2940,8 +2945,68 @@ ASTContext::getASTRecordLayout(const RecordDecl *D) const {
     llvm::outs() << "\n*** Dumping AST Record Layout\n";
     DumpRecordLayout(D, llvm::outs(), getLangOpts().DumpRecordLayoutsSimple);
   }
-
+  if(getLangOpts().DumpStructLayoutsForSbox) {
+    outputTypeToFile(D, llvm::outs());
+  }
   return *NewEntry;
+}
+
+void ASTContext::outputTypeToFile(const RecordDecl *RD, raw_ostream &OS) const
+{
+  QualType typeDecl = getTypeDeclType(RD);
+  std::string typeString = typeDecl.getAsString();
+  std::string matchString = "struct ";
+
+  #define beginsWith(input, match) (input.size() >= match.size() && equal(match.begin(), match.end(), input.begin()))
+  if(!beginsWith(typeString, matchString) || typeString.find("(") != std::string::npos)
+  {
+    return;
+  }  
+  #undef beginsWith
+
+  std::string structName = typeString.substr(matchString.size());
+  if(StructsFound.find(structName) != StructsFound.end())
+  {
+    return;
+  }
+
+  OS << "#undef sandbox_fields_reflection_exampleId_class_"  << structName << "\n";
+  OS << "#define sandbox_fields_reflection_exampleId_class_" << structName << "(f, g)";
+
+  const DeclContext * DC = cast<DeclContext>(RD);
+
+  for (auto *D : DC->noload_decls())
+  {
+    if (D->getKind() == clang::Decl::Field)
+    {
+      const FieldDecl *FD = dyn_cast<FieldDecl>(D);
+      const NamedDecl *ND = FD;
+
+      if (ND->getDeclName()) {
+        std::string fieldName = ND->getNameAsString();
+        QualType T = FD->getType();
+        SplitQualType T_split = T.getSplitDesugaredType();
+        std::string fieldType = QualType::getAsString(T_split);
+
+        OS << " \\\n\tf(" << fieldType << ", " << fieldName << ")";
+        OS << " \\\n\tg()";
+      }
+    }
+  }
+
+  OS << "\n";
+
+  StructsFound.insert(structName);
+
+  OS << "#undef sandbox_fields_reflection_exampleId_allClasses\n";
+  OS << "#define sandbox_fields_reflection_exampleId_allClasses(f)";
+
+  for(auto foundStruct : StructsFound) {
+    OS << " \\\n\tf(" << foundStruct << ", exampleId)";  
+  }
+
+  OS << "\n";
+
 }
 
 const CXXMethodDecl *ASTContext::getCurrentKeyFunction(const CXXRecordDecl *RD) {

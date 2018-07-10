@@ -1240,6 +1240,11 @@ BUILTIN(__builtin_addressof, "v*v&", "nct")
 BUILTIN(__builtin_operator_new, "v*z", "c")
 BUILTIN(__builtin_operator_delete, "vv*", "n")
 
+// @LOCALMOD-BEGIN
+// NaCl builtins.
+BUILTIN(__nacl_atomic_is_lock_free, "bzvCD*", "n")
+// @LOCALMOD-END
+
 #undef BUILTIN
 #undef LIBBUILTIN
 #undef LANGBUILTIN
